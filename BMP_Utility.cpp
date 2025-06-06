@@ -1,7 +1,5 @@
 #include "BMP_Utility.h"
 
-//#include <gdiplus.h>
-
 bool BMP_Utility::OpenBMP_BW(const std::string& filename)
 {
     file_stream.clear(); //just in case this is not the first Open
@@ -125,35 +123,24 @@ bool BMP_Utility::SaveBMP(const std::string& filename)
         return false;
     }
 
-    out_stream.write(reinterpret_cast<char*>(&bmp_file_header.bfType), sizeof(bmp_file_header.bfType));
-    auto bfSize_value = sizeof(bmp_file_header) + sizeof(bmp_info_header) + sizeof(rgb_arr);
-    out_stream.write(reinterpret_cast<char*>(&(bfSize_value)), sizeof(bmp_file_header.bfSize));
-    out_stream.write(reinterpret_cast<char*>(&bmp_file_header.bfReserved1), sizeof(bmp_file_header.bfReserved1));
-    out_stream.write(reinterpret_cast<char*>(&bmp_file_header.bfReserved2), sizeof(bmp_file_header.bfReserved2));
-    auto bfOffBits_temp_value = sizeof(bmp_file_header) + sizeof(bmp_info_header);
-    out_stream.write(reinterpret_cast<char*>(&bfOffBits_temp_value), sizeof(bmp_file_header.bfOffBits));
+    auto padding_amount = CalcPaddingAmount();
+
+    //Set correct values before saving
+    bmp_info_header.biSize = sizeof(BITMAPINFOHEADER);
+    bmp_info_header.biSizeImage = sizeof(rgb_arr[0]) * rgb_arr.size() + padding_amount * bmp_info_header.biHeight; //it common for it to be zero on import, recalc
+
+    bmp_file_header.bfSize = sizeof(bmp_file_header) + sizeof(bmp_info_header) + bmp_info_header.biSizeImage;
+    bmp_file_header.bfOffBits = sizeof(bmp_file_header) + sizeof(bmp_info_header);
 
 
-    auto biSize_value = sizeof(BITMAPINFOHEADER);
-    out_stream.write(reinterpret_cast<char*>(&biSize_value), sizeof(bmp_info_header.biSize));
-    out_stream.write(reinterpret_cast<char*>(&bmp_info_header.biWidth), sizeof(bmp_info_header.biWidth));
-    out_stream.write(reinterpret_cast<char*>(&bmp_info_header.biHeight), sizeof(bmp_info_header.biHeight));
-    out_stream.write(reinterpret_cast<char*>(&bmp_info_header.biPlanes), sizeof(bmp_info_header.biPlanes));
-    out_stream.write(reinterpret_cast<char*>(&bmp_info_header.biBitCount), sizeof(bmp_info_header.biBitCount));
-    out_stream.write(reinterpret_cast<char*>(&bmp_info_header.biCompression), sizeof(bmp_info_header.biCompression));
-    auto biSizeImage_value = sizeof(rgb_arr[0]) * rgb_arr.size() + CalcPaddingAmount() * bmp_info_header.biHeight;
-    out_stream.write(reinterpret_cast<char*>(&biSizeImage_value), sizeof(bmp_info_header.biSizeImage));
-    bmp_info_header.biSizeImage = biSizeImage_value; //it common for it to be zero, update just in case
-    out_stream.write(reinterpret_cast<char*>(&bmp_info_header.biXPelsPerMeter), sizeof(bmp_info_header.biXPelsPerMeter));
-    out_stream.write(reinterpret_cast<char*>(&bmp_info_header.biYPelsPerMeter), sizeof(bmp_info_header.biYPelsPerMeter));
-    out_stream.write(reinterpret_cast<char*>(&bmp_info_header.biClrUsed), sizeof(bmp_info_header.biClrUsed));
-    out_stream.write(reinterpret_cast<char*>(&bmp_info_header.biClrImportant), sizeof(bmp_info_header.biClrImportant));
+    out_stream.write(reinterpret_cast<char*>(&bmp_file_header), sizeof(bmp_file_header));
+    out_stream.write(reinterpret_cast<char*>(&bmp_info_header), sizeof(bmp_info_header));
 
     for (size_t i = 0; i < rgb_arr.size(); i++)
     {
         auto just_null = NULL;
 
-        //BGR order is from Microsoft docs
+        //BGR order for 24 and 32 bit (what we only support) is from Microsoft docs
         out_stream << rgb_arr[i].rgbtBlue;
         out_stream << rgb_arr[i].rgbtGreen;
         out_stream << rgb_arr[i].rgbtRed;
@@ -162,9 +149,10 @@ bool BMP_Utility::SaveBMP(const std::string& filename)
             out_stream.write(reinterpret_cast<char*>(&just_null), 1);
         }
 
-        if (ArrIdxToPixel(i).y == bmp_info_header.biWidth - 1)
+        //add padding bytes if needed
+        if (padding_amount > 0 && ArrIdxToPixel(i).y == bmp_info_header.biWidth - 1)
         {
-            out_stream.write(reinterpret_cast<char*>(&just_null), CalcPaddingAmount());
+            out_stream.write(reinterpret_cast<char*>(&just_null), padding_amount);
         }
 
     }
@@ -176,83 +164,38 @@ bool BMP_Utility::SaveBMP(const std::string& filename)
 
 bool BMP_Utility::ReadHeader()
 {
-    //Read File Header + BITMAPINFOHEADER
-    //Note that we only support BITMAPINFOHEADER. Extended headers info BITMAPV4HEADER or BITMAPV5HEADER is discarded.
-    std::array<char, sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER)> header_temp_buffer;
-    file_stream.read(header_temp_buffer.data(), header_temp_buffer.size());
+    //Read BITMAPFILEHEADER + BITMAPINFOHEADER
+    //Note that we only support BITMAPINFOHEADER. Extended info headers BITMAPV4HEADER or BITMAPV5HEADER is discarded.
+    file_stream.read(reinterpret_cast<char*>(&bmp_file_header), sizeof(bmp_file_header));
+    file_stream.read(reinterpret_cast<char*>(&bmp_info_header), sizeof(bmp_info_header));
 
-    int byte_position = 0;
-
-    //Fill in File Header from the buffer
-    //Calculate byte position to avoid hard-coded mistakes
-
-    bmp_file_header.bfType = *reinterpret_cast<decltype(BITMAPFILEHEADER::bfType)*>(&header_temp_buffer[byte_position]); //must be "BM"
-    byte_position += sizeof(BITMAPFILEHEADER::bfType); //= 2 (for the next variable)
-
-    if (header_temp_buffer[0] != 'B' || header_temp_buffer[1] != 'M')
+    if (bmp_file_header.bfType != 0x4d42) //0x4d42 = "BM", simply casting "BM" to WORD won't work 
     {
         std::cerr << "Error: Wrong format: the file must start with \"BM\"";
         return false;
     }
-
-    bmp_file_header.bfSize = *reinterpret_cast<decltype(BITMAPFILEHEADER::bfSize)*>(&header_temp_buffer[byte_position]); //size of the file, in bytes
-    byte_position += sizeof(BITMAPFILEHEADER::bfSize); // = 6 (for the next variable)
-
-    bmp_file_header.bfReserved1 = *reinterpret_cast<decltype(BITMAPFILEHEADER::bfReserved1)*>(&header_temp_buffer[byte_position]); //must be zero 
-    byte_position += sizeof(BITMAPFILEHEADER::bfReserved1); // = 8 (for the next variable)
-
-    bmp_file_header.bfReserved2 = *reinterpret_cast<decltype(BITMAPFILEHEADER::bfReserved2)*>(&header_temp_buffer[byte_position]); //must be zero 
-    byte_position += sizeof(BITMAPFILEHEADER::bfReserved2); // = 10
 
     if (bmp_file_header.bfReserved1 != 0 || bmp_file_header.bfReserved2 != 0)
     {
         std::cerr << "Error: Wrong format: Reserved1 or Reserved2 is non-zero";
         return false;
     }
-    //Offset from the start of the file to where actual bitmap start 
-    //sizeof(BITMAPFILEHEADER) + the second header size
-    bmp_file_header.bfOffBits = *reinterpret_cast<decltype(BITMAPFILEHEADER::bfOffBits)*>(&header_temp_buffer[byte_position]);
-    byte_position += sizeof(bmp_file_header.bfOffBits); // = 14
-    
-    //Fill in BITMAPINFOHEADER
 
-    //2nd header size
-    bmp_info_header.biSize = *reinterpret_cast<decltype(BITMAPINFOHEADER::biSize)*>(&header_temp_buffer[byte_position]);
-    byte_position += sizeof(BITMAPINFOHEADER::biSize); // = 18
+    if (bmp_info_header.biWidth == 0)
+    {
+        std::cerr << "Error: picture width can't be zero";
+        return false;
+    }
 
-    bmp_info_header.biWidth = *reinterpret_cast<decltype(BITMAPINFOHEADER::biWidth)*>(&header_temp_buffer[byte_position]);
-    byte_position += sizeof(BITMAPINFOHEADER::biWidth); // = 22
-
-    //if positive, it's from bottom to top (default), if negative - from top to bottom 
-    bmp_info_header.biHeight = *reinterpret_cast<decltype(BITMAPINFOHEADER::biHeight)*>(&header_temp_buffer[byte_position]);
-    byte_position += sizeof(BITMAPINFOHEADER::biHeight); // = 26
-
-    bmp_info_header.biPlanes = *reinterpret_cast<decltype(BITMAPINFOHEADER::biPlanes)*>(&header_temp_buffer[byte_position]);
-    byte_position += sizeof(BITMAPINFOHEADER::biPlanes); // = 28
-
-    bmp_info_header.biBitCount = *reinterpret_cast<decltype(BITMAPINFOHEADER::biBitCount)*>(&header_temp_buffer[byte_position]);
-    byte_position += sizeof(BITMAPINFOHEADER::biBitCount);
-
-    bmp_info_header.biCompression = *reinterpret_cast<decltype(BITMAPINFOHEADER::biCompression)*>(&header_temp_buffer[byte_position]);
-    byte_position += sizeof(BITMAPINFOHEADER::biCompression);
-
-    bmp_info_header.biSizeImage = *reinterpret_cast<decltype(BITMAPINFOHEADER::biSizeImage)*>(&header_temp_buffer[byte_position]);
-    byte_position += sizeof(BITMAPINFOHEADER::biSizeImage);
-
-    bmp_info_header.biXPelsPerMeter = *reinterpret_cast<decltype(BITMAPINFOHEADER::biXPelsPerMeter)*>(&header_temp_buffer[byte_position]);
-    byte_position += sizeof(BITMAPINFOHEADER::biXPelsPerMeter);
-
-    bmp_info_header.biYPelsPerMeter = *reinterpret_cast<decltype(BITMAPINFOHEADER::biYPelsPerMeter)*>(&header_temp_buffer[byte_position]);
-    byte_position += sizeof(BITMAPINFOHEADER::biYPelsPerMeter);
-
-    bmp_info_header.biClrUsed = *reinterpret_cast<decltype(BITMAPINFOHEADER::biClrUsed)*>(&header_temp_buffer[byte_position]);
-    byte_position += sizeof(BITMAPINFOHEADER::biClrUsed);
-
-    bmp_info_header.biClrImportant = *reinterpret_cast<decltype(BITMAPINFOHEADER::biClrImportant)*>(&header_temp_buffer[byte_position]);
-    byte_position += sizeof(BITMAPINFOHEADER::biClrImportant);
+    if (bmp_info_header.biHeight == 0)
+    {
+        std::cerr << "Error: picture height can't be zero";
+        return false;
+    }
 
     return true;
 }
+
 
 bool BMP_Utility::ReadBitmap()
 {

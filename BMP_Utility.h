@@ -42,8 +42,8 @@ private:
     POINT ArrIdxToPixel(int idx) const;
 
 
-    //Each line size in bytes be divisible by 4
-    //i.e 3 bytes per pixel (24bit) x 10 width = 30 bytes per line, will be padded to 32
+    //Each line size (in bytes) must be divisible by 4
+    // i.e 3 bytes per pixel (24bit) x 10 width = 30 bytes per line, will be padded to 32
     int CalcPaddingAmount() const { return ((4 - (bmp_info_header.biWidth * bmp_info_header.biBitCount / 8) % 4) % 4); }
 
 private:
