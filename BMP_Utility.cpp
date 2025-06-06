@@ -36,12 +36,14 @@ void BMP_Utility::OutputToConsole_BW() const
         for (LONG j = 0 * i; j < bmp_info_header.biWidth; j++)
         {
             int current_idx = i * bmp_info_header.biWidth + j;
-            if (rgb_arr[current_idx].rgbtRed > 0 || rgb_arr[current_idx].rgbtGreen > 0 || rgb_arr[current_idx].rgbtBlue > 0)
+            if (rgb_arr[current_idx].rgbtRed == 255 && rgb_arr[current_idx].rgbtGreen == 255 && rgb_arr[current_idx].rgbtBlue == 255)
             {
+                //white
                 std::cout << '.' << ' ';
             }
             else
             {
+                //any value rather than white
                 std::cout << 'B' << ' ';
             }
 
